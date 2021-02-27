@@ -225,25 +225,39 @@ async def on_voice_state_update(user,vc_before,vc_after):
    global guild
    #remove permissions from previous channel first
    if vc_before.channel != None:
+        #Skip non join/leave/switch vc channel events
+        if vc_before.channel == vc_after.channel:
+            return
         vc_txt_before = vc_before.channel.name.lower()
         vc_txt_before = vc_txt_before.replace(" ", "-") + "-vc"
+        vc_txt_before = vc_txt_before.replace("+", "plus")
         channel = get(vc_before.channel.category.text_channels, name=vc_txt_before)
         #Txt Channel might not exist the first few times
         if channel != None:
-            await channel.set_permissions(user, read_messages=False)
+            if len(vc_before.channel.members) == 0:
+                await channel.delete()
+            else:
+                await channel.set_permissions(user, read_messages=False)
 
    if vc_after.channel != None:
         vc_txt_after = vc_after.channel.name.lower()
         vc_txt_after = vc_txt_after.replace(" ", "-") + "-vc"
 
+        #VC rooms with non valid chars for txt rooms will still fail and create
+        #multiple txt channels for each user join
+        #Nevertheless, fix VC rooms with a '+' in their name
+        vc_txt_after = vc_txt_after.replace("+", "plus")
+
         channel = get(vc_after.channel.category.text_channels, name=vc_txt_after)
         if channel == None:
+            overwrites = {
+                guild.default_role: PermissionOverwrite(read_messages=False),
+                user: PermissionOverwrite(read_messages=True)
+            }
             channel = await vc_after.channel.category.create_text_channel(
-                name=vc_txt_after)
-            await channel.set_permissions(
-                guild.default_role, read_messages=False,
-                 read_message_history=False)
-        await channel.set_permissions(user, read_messages=True)
+                name=vc_txt_after, overwrites=overwrites)
+        else:
+            await channel.set_permissions(user, read_messages=True)
 
 
 def get_no_permission_msg(user_id):
@@ -286,6 +300,10 @@ async def refresh(ctx):
 
 @bot.command(pass_context=True)
 async def make_leaderboard(ctx):
+    if not role_admin in ctx.author.roles:
+        await ctx.message.channel.send(get_no_permission_msg(ctx.author.id))
+        return
+    
     # Este comando cria uma leaderboard com os utilizadores que mais falaram no servidor.
     visible_user_count = 50
     leaderboard = {}
@@ -321,7 +339,7 @@ async def rebuild_course_channels(ctx):
         permissions = {
             guild.default_role: PermissionOverwrite(read_messages=False)
         }
-        for degree in courses_by_degree[course]:
+        for degree in courses_by_degree[course]['degrees']:
             degree_obj = next(
                 (item for item in degrees if item["name"] == degree), None)
             if degree_obj is not None:
@@ -331,8 +349,8 @@ async def rebuild_course_channels(ctx):
         course_channel = get(courses_category.text_channels,
                              name=course.lower())
         if course_channel is None:
-            await courses_category.create_text_channel(course.lower(), overwrites=permissions)
+            await courses_category.create_text_channel(course.lower(), overwrites=permissions, topic=courses_by_degree[course]['name'])
         else:
-            await course_channel.edit(overwrites=permissions)
+            await course_channel.edit(overwrites=permissions, topic=courses_by_degree[course]['name'])
 
 bot.run(os.environ['DISCORD_TOKEN'])
